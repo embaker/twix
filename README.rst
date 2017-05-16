@@ -11,7 +11,8 @@ Quick Start
 
 The first step is to create a `MeasFile` object:
 
-..
+::
+
     from twix import MeasFile
     mf = MeasFile('path/to/my/file/meas_MID1111_some_proto_FID22222.dat')
 
@@ -21,7 +22,8 @@ using a large amount of RAM. Here we simply grab the first readout and the break
 of the for loop. We can get a quick overview of the readout meta data by just 
 printing the object.
 
-..
+::
+
     first_ro = None
     for readout in mf.gen_readouts():
         first_ro = readout
@@ -83,7 +85,8 @@ to a k-space array for an arbitrary pulse sequence is not always possible. Regar
 it can be helpful to use the `get_k_space_spec` method to see what the best guess is for 
 this mapping:
 
-..
+::
+
     spec = mf.get_k_space_spec()
     print spec.dim_info
     [('slice', 21), ('line', 171), ('readout', 512)]
@@ -93,7 +96,8 @@ In this case we have data from a relatively simple pulse sequence, and the retur
 is actually the correct mapping. We can request the actual k-space array, or a portion of 
 it, with the `get_k_space` method.
 
-..
+::
+
     kspc = mf.get_k_space()
     print kspc.shape
     (21, 171, 512)
@@ -101,7 +105,8 @@ it, with the `get_k_space` method.
 If you want just a portion the k-space array (i.e. due to memory constraints) you can fix 
 on or more of the "counter" values.
 
-..
+::
+
     kspc = mf.get_k_space(fixed={'slice': 12})
     print kspc.shape
     (171, 512)
