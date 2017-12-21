@@ -638,7 +638,7 @@ class Meas(object):
             for name, evp_data in self.meta:
                 match = vrs_regex.search(evp_data)
                 if match:
-                    syngo_version = vrs_regex.group('syngo_version')
+                    syngo_version = match.group('syngo_version')
                     if LooseVersion(syngo_version) < LooseVersion('D11'):
                         self._version = 1
                     else:
