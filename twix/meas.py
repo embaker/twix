@@ -3,14 +3,18 @@
 Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
-import os, struct, sys
+import os, struct, sys, re
 import cPickle as pickle
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
 from copy import deepcopy
+from distutils.version import LooseVersion # for syngo version comparision
 
 import numpy as np
+
+
+
 
 
 def _read_cstr(source_file):
@@ -618,14 +622,6 @@ class Meas(object):
         if self._cntr_order is None:
             self._cntr_order = default_counter_order
 
-        # TODO: Determine version automatically if None
-        if self._version == 1:
-            self._readout_class = ReadoutV1
-        elif self._version == 2:
-            self._readout_class = ReadoutV2
-        else:
-            raise ValueError("Unknown version: %s" % self._version)
-
         # Lineup with our file offset if needed
         if self._src_file.tell() != self._offset:
             self._src_file.seek(self._offset)
@@ -634,6 +630,27 @@ class Meas(object):
         (header_size, n_evps) = struct.unpack('<2I', src_file.read(8))
         self._header_size = header_size
         self._n_evps = n_evps
+
+        # Determine version automatically
+        # TODO: Update once proper meta data parsing is included
+        if self._version is None:
+            vrs_regex = re.compile(r'syngo MR (?P<syngo_version>[A-Z][0-9]+)')
+            for name, evp_data in self.meta:
+                match = vrs_regex.search(evp_data)
+                if match:
+                    syngo_version = vrs_regex.group('syngo_version')
+                    if LooseVersion(syngo_version) < LooseVersion('D11'):
+                        self._version = 1
+                    else:
+                        self._version = 2
+                    break
+
+        if self._version == 1:
+            self._readout_class = ReadoutV1
+        elif self._version == 2:
+            self._readout_class = ReadoutV2
+        else:
+            raise ValueError("Unknown version: %s" % self._version)
 
     @property
     def meta(self):
@@ -653,7 +670,7 @@ class Meas(object):
             evps.append((name, evp_data))
 
         # TODO: handle meta data parsing
-        self._meta = {}
+        self._meta = evps
         return self._meta
 
     def gen_readouts(self, no_data=False):
