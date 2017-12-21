@@ -8,6 +8,7 @@ import cPickle as pickle
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
+from copy import deepcopy
 
 import numpy as np
 
@@ -331,7 +332,7 @@ class ReadoutV1(object):
 
     _HDR_CLASS = ReadoutHeaderV1
 
-    _HDR_SPECS = mdh_elem_specs
+    _HDR_SPECS = deepcopy(mdh_elem_specs)
 
     _HDR_SPECS.update(mdh_elem_specs_v1)
 
@@ -416,7 +417,7 @@ class ReadoutV2(ReadoutV1):
 
     _HDR_CLASS = ReadoutHeaderV2
 
-    _HDR_SPECS = mdh_elem_specs
+    _HDR_SPECS = deepcopy(mdh_elem_specs)
 
     _HDR_SPECS.update(mdh_elem_specs_v2)
 
@@ -447,8 +448,8 @@ class ReadoutV2(ReadoutV1):
     @classmethod
     def from_file(klass, src_file, no_data=False, chan_idx=None):
         '''Create one or more readouts by reading from the src_file.
-        
-        Each channel subheader plus data is treated as its own readout. If 
+
+        Each channel subheader plus data is treated as its own readout. If
         `chan_idx` is specified than just that channel is returned.
         '''
         hdr = klass.read_mdh_hdr(src_file)
@@ -586,7 +587,7 @@ class KSpaceSpec(object):
             if ro_idx is not None:
                 ro_map[ro_idx] = tuple(chunk_idx)
         return (out_shape, ro_map)
-        
+
 
 class KSpaceSizeError(Exception):
     '''Thrown if the computed k-space size is too small for the data'''
@@ -659,7 +660,7 @@ class Meas(object):
         '''Generate readouts one at a time as stored in the file'''
         mdh_offset = self._offset + self._header_size
         mdh_idx = 0
-        
+
         while True:
             if self._src_file.tell() != mdh_offset:
                 self._src_file.seek(mdh_offset)
@@ -727,7 +728,7 @@ class Meas(object):
             if found_counters is None:
                 found_counters = [x[0] for x in cntr_vals]
                 cntr_pack_fmt = '%dH' % n_cntrs
-            packed_cntrs = struct.pack(cntr_pack_fmt, 
+            packed_cntrs = struct.pack(cntr_pack_fmt,
                                        *(x[1] for x in cntr_vals))
             indices.append((packed_cntrs, ro_idx))
             # TODO: More efficient way to handle duplicate counters?
