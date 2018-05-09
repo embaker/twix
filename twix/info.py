@@ -4,7 +4,7 @@ import sys
 
 _version_major = 0
 _version_minor = 1
-_version_micro = 0
+_version_micro = 1
 _version_extra = 'alpha'
 __version__ = "%s.%s.%s%s" % (_version_major,
                               _version_minor,
@@ -47,4 +47,3 @@ VERSION             = __version__
 INSTALL_REQUIRES    = install_requires
 EXTRAS_REQUIRES      = extras_requires
 PROVIDES            = ["twix"]
-

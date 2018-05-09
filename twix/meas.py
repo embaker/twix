@@ -14,9 +14,6 @@ from distutils.version import LooseVersion # for syngo version comparision
 import numpy as np
 
 
-
-
-
 def _read_cstr(source_file):
     '''Read a null terminated byte string'''
     chars = [ ]
@@ -407,13 +404,38 @@ class ReadoutV1(object):
     def from_file(klass, src_file, no_data=False):
         '''Create a readout by reading from the given source file'''
         hdr = klass.read_mdh_hdr(src_file)
+
+        data_count = 2 * hdr.samples_in_scan
+        data_size = 4 * data_count
+        dma_size = hdr.dma_info & 0xFFFFFFL
+        ro_size = klass.HDR_STRUCT_SIZE + data_size
+        n_ro = dma_size // ro_size
+
         if no_data:
             data = None
+            src_file.seek(data_size, 1)
         else:
             data = np.fromfile(src_file,
                                dtype=np.float32,
-                               count=2 * hdr.samples_in_scan).view(np.complex64)
-        return [klass(hdr, data)]
+                               count=data_count).view(np.complex64)
+
+        result = [klass(hdr, data)]
+
+        if n_ro < 2 or dma_size % ro_size != 0:
+            return result
+
+        for ich in range(1, n_ro):
+            cur_hdr = klass.read_mdh_hdr(src_file)
+            if no_data:
+                cur_data = None
+                src_file.seek(data_size, 1)
+            else:
+                cur_data = np.fromfile(src_file,
+                                       dtype=np.float32,
+                                       count=data_count).view(np.complex64)
+            result.append(klass(cur_hdr, cur_data))
+
+        return result
 
 
 class ReadoutV2(ReadoutV1):
@@ -644,6 +666,8 @@ class Meas(object):
                     else:
                         self._version = 2
                     break
+            else:
+                raise ValueError("Could not automatically determine version")
 
         if self._version == 1:
             self._readout_class = ReadoutV1
