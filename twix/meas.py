@@ -743,8 +743,6 @@ class Meas(object):
         first_ro = None
         ro_idx = -1
         real_acq_count = 1
-        print "About to start processing file..."
-        start_dt = datetime.now()
         while first_ro is None or not first_ro.is_real_acquisition:
             ro_idx += 1
             first_ro = ro_gen.next()
@@ -757,7 +755,6 @@ class Meas(object):
                 continue
             real_acq_count += 1
             if samples_in_scan != ro.hdr.samples_in_scan:
-                print ro_idx
                 raise ValueError("The samples_in_scan changed: %d vs %d"
                                  % (samples_in_scan,
                                     ro.hdr.samples_in_scan))
@@ -786,8 +783,6 @@ class Meas(object):
                     if val != val2 or name == name2:
                         non_dupes[name].add(name2)
         mid_dt = datetime.now()
-        print "Done reading file in: %s" % (mid_dt - start_dt)
-        print counter_sets
         # Pull out info about the varying counters
         varying_set = set()
         varying_counters = []
@@ -845,7 +840,6 @@ class Meas(object):
             idx_map[pickle.dumps(k_spc_idx, pickle.HIGHEST_PROTOCOL)] = ro_idx
 
         end_dt = datetime.now()
-        print "Postprocessing done in: %s" % (end_dt - mid_dt)
 
         # Build and return the KSpaceSpec object
         dim_info = varying_counters + [('readout', samples_in_scan)]
