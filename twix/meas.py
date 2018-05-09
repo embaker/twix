@@ -375,7 +375,13 @@ class ReadoutV1(object):
     def is_real_acquisition(self):
         """Check if this contains "real" data vs callibration/reference data
         """
-        if self.eval_info_is_set('PATREFANDIMASCAN'):
+        # TODO: It isn't clear if these flags are used in a consistent 
+        #       enough way that we can automatically make this 
+        #       determination. It certainly doesn't seem like 
+        #       "PATREFSCAN" alone is enough to tell us that the line is
+        #       actually part of the imaging data, yet we have some data
+        #       where this seems to be the case.
+        if self.eval_info_is_set('PATREFANDIMASCAN') or self.eval_info_is_set('PATREFSCAN'):
             return True
         else:
             return (self.hdr.eval_info_mask & SUPLEMENT_DATA_MASK) == 0
@@ -781,6 +787,7 @@ class Meas(object):
                         non_dupes[name].add(name2)
         mid_dt = datetime.now()
         print "Done reading file in: %s" % (mid_dt - start_dt)
+        print counter_sets
         # Pull out info about the varying counters
         varying_set = set()
         varying_counters = []
