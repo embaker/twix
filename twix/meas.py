@@ -260,7 +260,10 @@ EVAL_INFO_FLAGS = ['ACQEND',
                    'ONLINE',
                    'OFFLINE',
                    'SYNCDATA',
+                   'UNKNOWN6',
+                   'UNKNOWN7',
                    'LASTSCANINCONCAT',
+                   'UNKNOWN9',
                    'RAWDATACORRECTION',
                    'LASTSCANINMEAS',
                    'SCANSCALEFACTOR',
@@ -284,14 +287,17 @@ EVAL_INFO_FLAGS = ['ACQEND',
                    'TREFFECTIVEBEGIN',
                    'TREFFECTIVEEND',
                    'MDS_REF_POSITION',
-                   'SLC_AVERAGED',
+                   'SLC_AVERAGED'
                    'TAGFLAG1',
                    'CT_NORMALIZE',
                    'SCAN_FIRST',
                    'SCAN_LAST',
+                   'UNKNOWN38',
+                   'UNKNOWN39',
                    'FIRST_SCAN_IN_BLADE',
                    'LAST_SCAN_IN_BLADE',
                    'LAST_BLADE_IN_TR',
+                   'UNKNOWN43',
                    'PACE',
                    'RETRO_LASTPHASE',
                    'RETRO_ENDOFMEAS',
@@ -375,12 +381,8 @@ class ReadoutV1(object):
     def is_real_acquisition(self):
         """Check if this contains "real" data vs callibration/reference data
         """
-        # TODO: It isn't clear if these flags are used in a consistent 
-        #       enough way that we can automatically make this 
-        #       determination. It certainly doesn't seem like 
-        #       "PATREFSCAN" alone is enough to tell us that the line is
-        #       actually part of the imaging data, yet we have some data
-        #       where this seems to be the case.
+        # TODO: This was developed while our eval_info mask handling had some
+        #       bugs, and thus needs to be reevaluated
         if self.eval_info_is_set('PATREFANDIMASCAN') or self.eval_info_is_set('PATREFSCAN'):
             return True
         else:
