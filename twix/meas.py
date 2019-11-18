@@ -4,11 +4,12 @@ Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
 import os, struct, sys, re
-import cPickle as pickle
+import pickle
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
 from copy import deepcopy
+from functools import reduce
 from distutils.version import LooseVersion # for syngo version comparision
 
 import numpy as np
@@ -343,11 +344,11 @@ class ReadoutV1(object):
 
     _HDR_SPECS.update(mdh_elem_specs_v1)
 
-    _MDH_DMA_LENGTH_MASK = 0x0FFFFFFL
+    _MDH_DMA_LENGTH_MASK = 0x0FFFFFF
 
-    _MDH_PACK_BIT_MASK = 0x02000000L
+    _MDH_PACK_BIT_MASK = 0x02000000
 
-    _MDH_ENABLE_FLAGS_MASK = 0xFC000000L
+    _MDH_ENABLE_FLAGS_MASK = 0xFC000000
 
     HDR_STRUCT_FMT = get_struct_fmt(_HDR_CLASS, _HDR_SPECS)
 
@@ -368,8 +369,8 @@ class ReadoutV1(object):
 
     @property
     def dma_length(self):
-        first16 = self.hdr.dma_info & 0xFFFFL
-        next8 = (self.hdr.dma_info & 0xFF0000L) >> 16
+        first16 = self.hdr.dma_info & 0xFFFF
+        next8 = (self.hdr.dma_info & 0xFF0000) >> 16
         return first16 + (next8 * 2**16)
 
     def eval_info_is_set(self, flag_name):
@@ -415,7 +416,7 @@ class ReadoutV1(object):
 
         data_count = 2 * hdr.samples_in_scan
         data_size = 4 * data_count
-        dma_size = hdr.dma_info & 0xFFFFFFL
+        dma_size = hdr.dma_info & 0xFFFFFF
         ro_size = klass.HDR_STRUCT_SIZE + data_size
         n_ro = dma_size // ro_size
 
@@ -455,7 +456,7 @@ class ReadoutV2(ReadoutV1):
 
     _HDR_SPECS.update(mdh_elem_specs_v2)
 
-    _SUBHDR_TYPE_MASK = 0x000000FFL
+    _SUBHDR_TYPE_MASK = 0x000000FF
 
     _SUBHDR_LEN_RSHIFT = 8
 
@@ -747,7 +748,7 @@ class Meas(object):
         real_acq_count = 1
         while first_ro is None or not first_ro.is_real_acquisition:
             ro_idx += 1
-            first_ro = ro_gen.next()
+            first_ro = next(ro_gen)
         samples_in_scan = first_ro.hdr.samples_in_scan
         for ro in ro_gen:
             ro_idx += 1
@@ -934,8 +935,8 @@ class MeasFile(object):
                  patient,
                  protocol) = struct.unpack('<2I2Q64s64s',
                                            self._src_file.read(152))
-                patient = patient.rstrip('\0')
-                protocol = protocol.rstrip('\0')
+                patient = patient.rstrip(b'\0')
+                protocol = protocol.rstrip(b'\0')
                 self._meas.append(Meas(self._src_file,
                                        offset,
                                        length,
