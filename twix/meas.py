@@ -556,6 +556,17 @@ class KSpaceSpec(object):
         self.dim_info = dim_info
         self.idx_map = idx_map
         self.ro_padding = ro_padding
+        self._dim_names = set([d[0] for d in dim_info])
+
+    def pad_dim(self, dim_name, padded_size):
+        new_dim_info = []
+        # TODO: Warn if padded size doesn't make sense
+        for name, size in self.dim_info:
+            if name == dim_name:
+                new_dim_info.append((name, padded_size))
+            else:
+                new_dim_info.append((name, size))
+        self.dim_info = new_dim_info
 
     def get_chunk_info(self, fixed=None, bounds=None):
         '''Get information about a subset of k-space
@@ -578,8 +589,16 @@ class KSpaceSpec(object):
         '''
         if fixed is None:
             fixed = {}
+        else:
+            for dim_name in fixed:
+                if dim_name not in self._dim_names:
+                    raise ValueError("Unknown dimension: %s" % dim_name)
         if bounds is None:
             bounds = {}
+        else:
+            for dim_name in bounds:
+                if dim_name not in self._dim_names:
+                    raise ValueError("Unknown dimension: %s" % dim_name)
 
         # Figure out the chunk of the array we are considering
         lb = []
@@ -849,6 +868,22 @@ class Meas(object):
         self._k_space_spec = KSpaceSpec(dim_info, idx_map)
         return self._k_space_spec
 
+    def _insert_ro(self, readout, arr, arr_idx):
+        expected_ro = arr.shape[-1]
+        rdata = readout.data
+        actual_ro = len(rdata)
+        if actual_ro < expected_ro:
+            # Async echo
+            if readout.eval_info_is_set('REFLECT'):
+                arr[arr_idx][:actual_ro] = rdata[::-1]
+            else:
+                arr[arr_idx][expected_ro - actual_ro:] = rdata
+        else:
+            if readout.eval_info_is_set('REFLECT'):
+                arr[arr_idx] = rdata[::-1]
+            else:
+                arr[arr_idx] = rdata
+
     def _fill_with_seek(self, spec, ro_map, arr):
         max_ro_per_mdh = np.cumsum(self._ro_per_mdh) - 1
         ro_indices = sorted(ro_map.keys())
@@ -868,7 +903,8 @@ class Meas(object):
                 curr_idx = first_idx
             buf_idx = ro_idx - first_idx
             arr_idx = ro_map[ro_idx]
-            arr[arr_idx] = ro_buf[buf_idx].data
+            ro = ro_buf[buf_idx]
+            self._insert_ro(ro_buf[buf_idx], arr, arr_idx)
 
     def _fill_seq(self, spec, ro_map, arr):
         ro_indices = deque(sorted(ro_map.keys()))
@@ -876,7 +912,7 @@ class Meas(object):
         for ro_idx, readout in enumerate(self.gen_readouts()):
             if ro_idx == curr_ro_idx:
                 arr_idx = ro_map[ro_idx]
-                arr[arr_idx] = readout.data
+                self._insert_ro(readout, arr, arr_idx)
                 if len(ro_indices) == 0:
                     break
                 curr_ro_idx = ro_indices.popleft()
