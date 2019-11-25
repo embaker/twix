@@ -3,7 +3,7 @@
 Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
-import os, struct, sys, re
+import os, struct, sys, re, math
 import pickle
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
@@ -545,6 +545,9 @@ class KSpaceSpec(object):
         Each element is a tuple giving the name and size of each dimension
         The last dimension should always be the "readout" dimension.
 
+    center_indices : dict
+        Map dim names to the center of k-space index values
+
     idx_map : dict
         Map n-D K-space indices (minus the last index) to 1-D readout indices
 
@@ -552,8 +555,9 @@ class KSpaceSpec(object):
         Tuple giving the actual readout length and start index
         Can be omitted if there is no zero padding along the readout dim
     '''
-    def __init__(self, dim_info, idx_map, ro_padding=None):
+    def __init__(self, dim_info, center_indices, idx_map, ro_padding=None):
         self.dim_info = dim_info
+        self.center_indices = center_indices
         self.idx_map = idx_map
         self.ro_padding = ro_padding
         self._dim_names = set([d[0] for d in dim_info])
@@ -604,7 +608,11 @@ class KSpaceSpec(object):
         lb = []
         ub = []
         out_shape = []
+        padded_centers = {}
         for dim_name, dim_size in self.dim_info[:-1]:
+            if dim_name in self.center_indices:
+                # TODO: Is taking the ceiling here correct?
+                padded_centers[dim_name] = int(math.ceil(dim_size / 2.0))
             if dim_name in fixed:
                 fixed_val = fixed[dim_name]
                 if not 0 <= fixed_val < dim_size:
@@ -633,7 +641,11 @@ class KSpaceSpec(object):
             chunk_idx = []
             for dim_idx, (name, _) in enumerate(self.dim_info[:-1]):
                 aidx = full_arr_idx[dim_idx]
-                map_idx.append((name, aidx))
+                if name in padded_centers:
+                    centering_offset = padded_centers[name] - self.center_indices[name]
+                else:
+                    centering_offset = 0
+                map_idx.append((name, aidx - centering_offset))
                 if name not in fixed:
                     chunk_idx.append(aidx - lb[dim_idx])
             map_idx = tuple(sorted(map_idx))
@@ -769,6 +781,10 @@ class Meas(object):
             ro_idx += 1
             first_ro = next(ro_gen)
         samples_in_scan = first_ro.hdr.samples_in_scan
+        center_indices = {'column' : first_ro.hdr.kspace_center_column,
+                          'line' : first_ro.hdr.kspace_center_line,
+                          'partition' : first_ro.hdr.kspace_center_partition,
+                         }
         for ro in ro_gen:
             ro_idx += 1
             if ro.is_last_acquisition:
@@ -865,7 +881,7 @@ class Meas(object):
 
         # Build and return the KSpaceSpec object
         dim_info = varying_counters + [('readout', samples_in_scan)]
-        self._k_space_spec = KSpaceSpec(dim_info, idx_map)
+        self._k_space_spec = KSpaceSpec(dim_info, center_indices, idx_map)
         return self._k_space_spec
 
     def _insert_ro(self, readout, arr, arr_idx):
