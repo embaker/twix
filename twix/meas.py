@@ -3,11 +3,12 @@
 Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
-import os, struct, sys, re, six
+import os, struct, sys, re, math, six
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
 from copy import deepcopy
+from functools import reduce
 from distutils.version import LooseVersion # for syngo version comparision
 from functools import reduce
 
@@ -269,7 +270,10 @@ EVAL_INFO_FLAGS = ['ACQEND',
                    'ONLINE',
                    'OFFLINE',
                    'SYNCDATA',
+                   'UNKNOWN6',
+                   'UNKNOWN7',
                    'LASTSCANINCONCAT',
+                   'UNKNOWN9',
                    'RAWDATACORRECTION',
                    'LASTSCANINMEAS',
                    'SCANSCALEFACTOR',
@@ -293,14 +297,17 @@ EVAL_INFO_FLAGS = ['ACQEND',
                    'TREFFECTIVEBEGIN',
                    'TREFFECTIVEEND',
                    'MDS_REF_POSITION',
-                   'SLC_AVERAGED',
+                   'SLC_AVERAGED'
                    'TAGFLAG1',
                    'CT_NORMALIZE',
                    'SCAN_FIRST',
                    'SCAN_LAST',
+                   'UNKNOWN38',
+                   'UNKNOWN39',
                    'FIRST_SCAN_IN_BLADE',
                    'LAST_SCAN_IN_BLADE',
                    'LAST_BLADE_IN_TR',
+                   'UNKNOWN43',
                    'PACE',
                    'RETRO_LASTPHASE',
                    'RETRO_ENDOFMEAS',
@@ -384,7 +391,9 @@ class ReadoutV1(object):
     def is_real_acquisition(self):
         """Check if this contains "real" data vs callibration/reference data
         """
-        if self.eval_info_is_set('PATREFANDIMASCAN'):
+        # TODO: This was developed while our eval_info mask handling had some
+        #       bugs, and thus needs to be reevaluated
+        if self.eval_info_is_set('PATREFANDIMASCAN') or self.eval_info_is_set('PATREFSCAN'):
             return True
         else:
             return (self.hdr.eval_info_mask & SUPLEMENT_DATA_MASK) == 0
@@ -545,6 +554,9 @@ class KSpaceSpec(object):
         Each element is a tuple giving the name and size of each dimension
         The last dimension should always be the "readout" dimension.
 
+    center_indices : dict
+        Map dim names to the center of k-space index values
+
     idx_map : dict
         Map n-D K-space indices (minus the last index) to 1-D readout indices
 
@@ -552,10 +564,22 @@ class KSpaceSpec(object):
         Tuple giving the actual readout length and start index
         Can be omitted if there is no zero padding along the readout dim
     '''
-    def __init__(self, dim_info, idx_map, ro_padding=None):
+    def __init__(self, dim_info, center_indices, idx_map, ro_padding=None):
         self.dim_info = dim_info
+        self.center_indices = center_indices
         self.idx_map = idx_map
         self.ro_padding = ro_padding
+        self._dim_names = set([d[0] for d in dim_info])
+
+    def pad_dim(self, dim_name, padded_size):
+        new_dim_info = []
+        # TODO: Warn if padded size doesn't make sense
+        for name, size in self.dim_info:
+            if name == dim_name:
+                new_dim_info.append((name, padded_size))
+            else:
+                new_dim_info.append((name, size))
+        self.dim_info = new_dim_info
 
     def get_chunk_info(self, fixed=None, bounds=None):
         '''Get information about a subset of k-space
@@ -578,14 +602,26 @@ class KSpaceSpec(object):
         '''
         if fixed is None:
             fixed = {}
+        else:
+            for dim_name in fixed:
+                if dim_name not in self._dim_names:
+                    raise ValueError("Unknown dimension: %s" % dim_name)
         if bounds is None:
             bounds = {}
+        else:
+            for dim_name in bounds:
+                if dim_name not in self._dim_names:
+                    raise ValueError("Unknown dimension: %s" % dim_name)
 
         # Figure out the chunk of the array we are considering
         lb = []
         ub = []
         out_shape = []
+        padded_centers = {}
         for dim_name, dim_size in self.dim_info[:-1]:
+            if dim_name in self.center_indices:
+                # TODO: Is taking the ceiling here correct?
+                padded_centers[dim_name] = int(math.ceil(dim_size / 2.0))
             if dim_name in fixed:
                 fixed_val = fixed[dim_name]
                 if not 0 <= fixed_val < dim_size:
@@ -614,7 +650,11 @@ class KSpaceSpec(object):
             chunk_idx = []
             for dim_idx, (name, _) in enumerate(self.dim_info[:-1]):
                 aidx = full_arr_idx[dim_idx]
-                map_idx.append((name, aidx))
+                if name in padded_centers:
+                    centering_offset = padded_centers[name] - self.center_indices[name]
+                else:
+                    centering_offset = 0
+                map_idx.append((name, aidx - centering_offset))
                 if name not in fixed:
                     chunk_idx.append(aidx - lb[dim_idx])
             map_idx = tuple(sorted(map_idx))
@@ -748,12 +788,14 @@ class Meas(object):
         first_ro = None
         ro_idx = -1
         real_acq_count = 1
-        print("About to start processing file...")
-        start_dt = datetime.now()
         while first_ro is None or not first_ro.is_real_acquisition:
             ro_idx += 1
-            first_ro = ro_gen.next()
+            first_ro = next(ro_gen)
         samples_in_scan = first_ro.hdr.samples_in_scan
+        center_indices = {'column' : first_ro.hdr.kspace_center_column,
+                          'line' : first_ro.hdr.kspace_center_line,
+                          'partition' : first_ro.hdr.kspace_center_partition,
+                         }
         for ro in ro_gen:
             ro_idx += 1
             if ro.is_last_acquisition:
@@ -762,7 +804,6 @@ class Meas(object):
                 continue
             real_acq_count += 1
             if samples_in_scan != ro.hdr.samples_in_scan:
-                print(ro_idx)
                 raise ValueError("The samples_in_scan changed: %d vs %d"
                                  % (samples_in_scan,
                                     ro.hdr.samples_in_scan))
@@ -791,7 +832,6 @@ class Meas(object):
                     if val != val2 or name == name2:
                         non_dupes[name].add(name2)
         mid_dt = datetime.now()
-        print("Done reading file in: %s" % (mid_dt - start_dt))
         # Pull out info about the varying counters
         varying_set = set()
         varying_counters = []
@@ -849,12 +889,27 @@ class Meas(object):
             idx_map[pickle.dumps(k_spc_idx, pickle.HIGHEST_PROTOCOL)] = ro_idx
 
         end_dt = datetime.now()
-        print("Postprocessing done in: %s" % (end_dt - mid_dt))
 
         # Build and return the KSpaceSpec object
         dim_info = varying_counters + [('readout', samples_in_scan)]
-        self._k_space_spec = KSpaceSpec(dim_info, idx_map)
+        self._k_space_spec = KSpaceSpec(dim_info, center_indices, idx_map)
         return self._k_space_spec
+
+    def _insert_ro(self, readout, arr, arr_idx):
+        expected_ro = arr.shape[-1]
+        rdata = readout.data
+        actual_ro = len(rdata)
+        if actual_ro < expected_ro:
+            # Async echo
+            if readout.eval_info_is_set('REFLECT'):
+                arr[arr_idx][:actual_ro] = rdata[::-1]
+            else:
+                arr[arr_idx][expected_ro - actual_ro:] = rdata
+        else:
+            if readout.eval_info_is_set('REFLECT'):
+                arr[arr_idx] = rdata[::-1]
+            else:
+                arr[arr_idx] = rdata
 
     def _fill_with_seek(self, spec, ro_map, arr):
         max_ro_per_mdh = np.cumsum(self._ro_per_mdh) - 1
@@ -875,7 +930,8 @@ class Meas(object):
                 curr_idx = first_idx
             buf_idx = ro_idx - first_idx
             arr_idx = ro_map[ro_idx]
-            arr[arr_idx] = ro_buf[buf_idx].data
+            ro = ro_buf[buf_idx]
+            self._insert_ro(ro_buf[buf_idx], arr, arr_idx)
 
     def _fill_seq(self, spec, ro_map, arr):
         ro_indices = deque(sorted(ro_map.keys()))
@@ -883,7 +939,7 @@ class Meas(object):
         for ro_idx, readout in enumerate(self.gen_readouts()):
             if ro_idx == curr_ro_idx:
                 arr_idx = ro_map[ro_idx]
-                arr[arr_idx] = readout.data
+                self._insert_ro(readout, arr, arr_idx)
                 if len(ro_indices) == 0:
                     break
                 curr_ro_idx = ro_indices.popleft()
@@ -942,8 +998,8 @@ class MeasFile(object):
                  patient,
                  protocol) = struct.unpack('<2I2Q64s64s',
                                            self._src_file.read(152))
-                patient = patient.rstrip('\0')
-                protocol = protocol.rstrip('\0')
+                patient = patient.rstrip(b'\0')
+                protocol = protocol.rstrip(b'\0')
                 self._meas.append(Meas(self._src_file,
                                        offset,
                                        length,
