@@ -3,13 +3,18 @@
 Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
-import os, struct, sys, re
-import cPickle as pickle
+import os, struct, sys, re, six
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
 from copy import deepcopy
 from distutils.version import LooseVersion # for syngo version comparision
+from functools import reduce
+
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 import numpy as np
 
@@ -18,11 +23,15 @@ def _read_cstr(source_file):
     '''Read a null terminated byte string'''
     chars = [ ]
     char = source_file.read(1)
-    while char != '\x00':
+    end_char = six.b('\x00')
+    while char != end_char:
         chars.append(char)
         char = source_file.read(1)
 
-    return ''.join(chars)
+    out = six.b('').join(chars)
+    if six.PY3:
+        out = out.decode()
+    return out 
 
 
 class HeaderElemSpec(object):
@@ -337,11 +346,11 @@ class ReadoutV1(object):
 
     _HDR_SPECS.update(mdh_elem_specs_v1)
 
-    _MDH_DMA_LENGTH_MASK = 0x0FFFFFFL
+    _MDH_DMA_LENGTH_MASK = 0xFFFFFF
 
-    _MDH_PACK_BIT_MASK = 0x02000000L
+    _MDH_PACK_BIT_MASK = 0x2000000
 
-    _MDH_ENABLE_FLAGS_MASK = 0xFC000000L
+    _MDH_ENABLE_FLAGS_MASK = 0xFC000000
 
     HDR_STRUCT_FMT = get_struct_fmt(_HDR_CLASS, _HDR_SPECS)
 
@@ -362,8 +371,8 @@ class ReadoutV1(object):
 
     @property
     def dma_length(self):
-        first16 = self.hdr.dma_info & 0xFFFFL
-        next8 = (self.hdr.dma_info & 0xFF0000L) >> 16
+        first16 = self.hdr.dma_info & 0xFFFF
+        next8 = (self.hdr.dma_info & 0xFF0000) >> 16
         return first16 + (next8 * 2**16)
 
     def eval_info_is_set(self, flag_name):
@@ -407,7 +416,7 @@ class ReadoutV1(object):
 
         data_count = 2 * hdr.samples_in_scan
         data_size = 4 * data_count
-        dma_size = hdr.dma_info & 0xFFFFFFL
+        dma_size = hdr.dma_info & 0xFFFFFF
         ro_size = klass.HDR_STRUCT_SIZE + data_size
         n_ro = dma_size // ro_size
 
@@ -447,7 +456,7 @@ class ReadoutV2(ReadoutV1):
 
     _HDR_SPECS.update(mdh_elem_specs_v2)
 
-    _SUBHDR_TYPE_MASK = 0x000000FFL
+    _SUBHDR_TYPE_MASK = 0x000000FF
 
     _SUBHDR_LEN_RSHIFT = 8
 
@@ -691,6 +700,8 @@ class Meas(object):
             name = _read_cstr(self._src_file)
             (evp_size,) = struct.unpack('<I', self._src_file.read(4))
             evp_data = self._src_file.read(evp_size)
+            if six.PY3:
+                evp_data = evp_data.decode()
             evps.append((name, evp_data))
 
         # TODO: handle meta data parsing
@@ -737,7 +748,7 @@ class Meas(object):
         first_ro = None
         ro_idx = -1
         real_acq_count = 1
-        print "About to start processing file..."
+        print("About to start processing file...")
         start_dt = datetime.now()
         while first_ro is None or not first_ro.is_real_acquisition:
             ro_idx += 1
@@ -751,7 +762,7 @@ class Meas(object):
                 continue
             real_acq_count += 1
             if samples_in_scan != ro.hdr.samples_in_scan:
-                print ro_idx
+                print(ro_idx)
                 raise ValueError("The samples_in_scan changed: %d vs %d"
                                  % (samples_in_scan,
                                     ro.hdr.samples_in_scan))
@@ -780,7 +791,7 @@ class Meas(object):
                     if val != val2 or name == name2:
                         non_dupes[name].add(name2)
         mid_dt = datetime.now()
-        print "Done reading file in: %s" % (mid_dt - start_dt)
+        print("Done reading file in: %s" % (mid_dt - start_dt))
         # Pull out info about the varying counters
         varying_set = set()
         varying_counters = []
@@ -838,7 +849,7 @@ class Meas(object):
             idx_map[pickle.dumps(k_spc_idx, pickle.HIGHEST_PROTOCOL)] = ro_idx
 
         end_dt = datetime.now()
-        print "Postprocessing done in: %s" % (end_dt - mid_dt)
+        print("Postprocessing done in: %s" % (end_dt - mid_dt))
 
         # Build and return the KSpaceSpec object
         dim_info = varying_counters + [('readout', samples_in_scan)]
