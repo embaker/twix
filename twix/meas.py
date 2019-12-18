@@ -433,9 +433,10 @@ class ReadoutV1(object):
             data = None
             src_file.seek(data_size, 1)
         else:
-            data = np.fromfile(src_file,
-                               dtype=np.float32,
-                               count=data_count).view(np.complex64)
+            count = 2 * hdr.samples_in_scan
+            data = np.frombuffer(src_file.read(4 * count),
+                                 dtype=np.float32,
+                                 count=count).view(np.complex64)
 
         result = [klass(hdr, data)]
 
@@ -448,9 +449,10 @@ class ReadoutV1(object):
                 cur_data = None
                 src_file.seek(data_size, 1)
             else:
-                cur_data = np.fromfile(src_file,
-                                       dtype=np.float32,
-                                       count=data_count).view(np.complex64)
+                count = 2 * hdr.samples_in_scan
+                cur_data = np.frombuffer(src_file.read(4 * count),
+                                         dtype=np.float32,
+                                         count=count).view(np.complex64)
             result.append(klass(cur_hdr, cur_data))
 
         return result
@@ -512,9 +514,10 @@ class ReadoutV2(ReadoutV1):
                 data = None
                 src_file.seek(hdr.samples_in_scan * 8, 1)
             else:
-                data = np.fromfile(src_file,
-                                   dtype=np.float32,
-                                   count=2 * hdr.samples_in_scan).view(np.complex64)
+                count = 2 * hdr.samples_in_scan
+                data = np.frombuffer(src_file.read(4 * count),
+                                     dtype=np.float32,
+                                     count=count).view(np.complex64)
             result.append(klass(hdr, chan_hdr, data))
         return result
 
