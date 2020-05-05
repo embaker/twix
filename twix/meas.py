@@ -3,14 +3,19 @@
 Inspired by and includes code from "vespa" (http://scion.duhs.duke.edu/vespa/)
 '''
 
-import os, struct, sys, re, math
-import pickle
+import os, struct, sys, re, math, six
 from datetime import datetime
 from collections import namedtuple, deque, OrderedDict
 from itertools import product as iproduct
 from copy import deepcopy
 from functools import reduce
 from distutils.version import LooseVersion # for syngo version comparision
+from functools import reduce
+
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 import numpy as np
 
@@ -19,11 +24,15 @@ def _read_cstr(source_file):
     '''Read a null terminated byte string'''
     chars = [ ]
     char = source_file.read(1)
-    while char != '\x00':
+    end_char = six.b('\x00')
+    while char != end_char:
         chars.append(char)
         char = source_file.read(1)
 
-    return ''.join(chars)
+    out = six.b('').join(chars)
+    if six.PY3:
+        out = out.decode()
+    return out 
 
 
 class HeaderElemSpec(object):
@@ -344,9 +353,9 @@ class ReadoutV1(object):
 
     _HDR_SPECS.update(mdh_elem_specs_v1)
 
-    _MDH_DMA_LENGTH_MASK = 0x0FFFFFF
+    _MDH_DMA_LENGTH_MASK = 0xFFFFFF
 
-    _MDH_PACK_BIT_MASK = 0x02000000
+    _MDH_PACK_BIT_MASK = 0x2000000
 
     _MDH_ENABLE_FLAGS_MASK = 0xFC000000
 
@@ -424,9 +433,10 @@ class ReadoutV1(object):
             data = None
             src_file.seek(data_size, 1)
         else:
-            data = np.fromfile(src_file,
-                               dtype=np.float32,
-                               count=data_count).view(np.complex64)
+            count = 2 * hdr.samples_in_scan
+            data = np.frombuffer(src_file.read(4 * count),
+                                 dtype=np.float32,
+                                 count=count).view(np.complex64)
 
         result = [klass(hdr, data)]
 
@@ -439,9 +449,10 @@ class ReadoutV1(object):
                 cur_data = None
                 src_file.seek(data_size, 1)
             else:
-                cur_data = np.fromfile(src_file,
-                                       dtype=np.float32,
-                                       count=data_count).view(np.complex64)
+                count = 2 * hdr.samples_in_scan
+                cur_data = np.frombuffer(src_file.read(4 * count),
+                                         dtype=np.float32,
+                                         count=count).view(np.complex64)
             result.append(klass(cur_hdr, cur_data))
 
         return result
@@ -503,9 +514,10 @@ class ReadoutV2(ReadoutV1):
                 data = None
                 src_file.seek(hdr.samples_in_scan * 8, 1)
             else:
-                data = np.fromfile(src_file,
-                                   dtype=np.float32,
-                                   count=2 * hdr.samples_in_scan).view(np.complex64)
+                count = 2 * hdr.samples_in_scan
+                data = np.frombuffer(src_file.read(4 * count),
+                                     dtype=np.float32,
+                                     count=count).view(np.complex64)
             result.append(klass(hdr, chan_hdr, data))
         return result
 
@@ -777,6 +789,8 @@ class Meas(object):
             name = _read_cstr(self._src_file)
             (evp_size,) = struct.unpack('<I', self._src_file.read(4))
             evp_data = self._src_file.read(evp_size)
+            if six.PY3:
+                evp_data = evp_data.decode()
             evps.append((name, evp_data))
 
         # TODO: handle meta data parsing
