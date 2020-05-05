@@ -541,26 +541,71 @@ class KSpaceSpec(object):
     Parameters
     ----------
 
-    dim_info : list of tuples
-        Each element is a tuple giving the name and size of each dimension
+    dim_info : sequence of tuples
+        Each element is a tuple giving the name and size of each dimension.
         The last dimension should always be the "readout" dimension.
 
     center_indices : dict
-        Map dim names to the center of k-space index values
+        Map dim names to the center of k-space index values.
 
     idx_map : dict
-        Map n-D K-space indices (minus the last index) to 1-D readout indices
+        Map n-D K-space indices (minus the last index) to 1-D readout indices.
 
-    ro_padding : tuple
-        Tuple giving the actual readout length and start index
-        Can be omitted if there is no zero padding along the readout dim
+    ro_offset : int
+        Offset for acquired readout when zero padding that dimension.
+        If None, defaults to right-aligning the acquired data.
     '''
-    def __init__(self, dim_info, center_indices, idx_map, ro_padding=None):
-        self.dim_info = dim_info
-        self.center_indices = center_indices
-        self.idx_map = idx_map
-        self.ro_padding = ro_padding
-        self._dim_names = set([d[0] for d in dim_info])
+    def __init__(self, dim_info, center_indices, idx_map, ro_offset=None):
+        if dim_info[-1][0] != 'readout':
+            raise ValueError("Last dim should always be 'readout'")
+        self._dim_info = tuple(dim_info)
+        self._dim_names = tuple(d[0] for d in dim_info)
+        self._shape = tuple(x[1] for x in dim_info)
+        # TODO: check these indices make sense
+        self._center_indices = center_indices
+        self._idx_map = idx_map
+        self._ro_offset = ro_offset
+
+
+    @property
+    def dim_names(self):
+        return self._dim_names
+
+    @property
+    def dim_info(self):
+        return self._dim_info
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def center_indices(self):
+        return self._center_indices.copy()
+
+    @property
+    def ro_offset(self):
+        return self._ro_offset
+
+    def dim_size(self, dim_name):
+        return self._shape[self._dim_names.index(dim_name)]
+
+    def get_ro_idx(self, k_spc_loc):
+        '''Get the sequential readout location for a k-Space location
+
+        Parameters
+        ----------
+        k_spc_loc: dict or sequence of tuples
+        '''
+        if isinstance(k_spc_loc, dict):
+            k_spc_loc = tuple(sorted(k_spc_loc.items()))
+        else:
+            k_spc_loc = tuple(sorted(k_spc_loc))
+        res = self._idx_map.get(pickle.dumps(k_spc_loc,
+                                             pickle.HIGHEST_PROTOCOL))
+        if res is None:
+            raise IndexError("No readout found for location: %s" % k_spc_loc)
+        return res
 
     def pad_dim(self, dim_name, padded_size):
         new_dim_info = []
@@ -570,7 +615,8 @@ class KSpaceSpec(object):
                 new_dim_info.append((name, padded_size))
             else:
                 new_dim_info.append((name, size))
-        self.dim_info = new_dim_info
+        self._dim_info = tuple(new_dim_info)
+        self._shape = tuple(x[1] for x in self._dim_info)
 
     def get_chunk_info(self, fixed=None, bounds=None):
         '''Get information about a subset of k-space
@@ -609,8 +655,8 @@ class KSpaceSpec(object):
         ub = []
         out_shape = []
         padded_centers = {}
-        for dim_name, dim_size in self.dim_info[:-1]:
-            if dim_name in self.center_indices:
+        for dim_name, dim_size in self._dim_info[:-1]:
+            if dim_name in self._center_indices:
                 # TODO: Is taking the ceiling here correct?
                 padded_centers[dim_name] = int(math.ceil(dim_size / 2.0))
             if dim_name in fixed:
@@ -632,7 +678,7 @@ class KSpaceSpec(object):
                 lb.append(0)
                 ub.append(dim_size)
                 out_shape.append(dim_size)
-        out_shape.append(self.dim_info[-1][1])
+        out_shape.append(self._dim_info[-1][1])
 
         # Build the map for any data that was actually acquired
         ro_map = {}
@@ -649,7 +695,7 @@ class KSpaceSpec(object):
                 if name not in fixed:
                     chunk_idx.append(aidx - lb[dim_idx])
             map_idx = tuple(sorted(map_idx))
-            ro_idx = self.idx_map.get(pickle.dumps(map_idx, pickle.HIGHEST_PROTOCOL))
+            ro_idx = self._idx_map.get(pickle.dumps(map_idx, pickle.HIGHEST_PROTOCOL))
             if ro_idx is not None:
                 ro_map[ro_idx] = tuple(chunk_idx)
         return (out_shape, ro_map)
@@ -884,26 +930,36 @@ class Meas(object):
         self._k_space_spec = KSpaceSpec(dim_info, center_indices, idx_map)
         return self._k_space_spec
 
-    def _insert_ro(self, readout, arr, arr_idx):
-        expected_ro = arr.shape[-1]
+    def _insert_ro(self, readout, arr, arr_idx, ro_offset):
+        full_len = arr.shape[-1]
         rdata = readout.data
-        actual_ro = len(rdata)
-        if actual_ro < expected_ro:
-            # Async echo
-            if readout.eval_info_is_set('REFLECT'):
-                arr[arr_idx][:actual_ro] = rdata[::-1]
+        acq_len = len(rdata)
+        if acq_len < full_len:
+            # We have readout zero padding
+            if ro_offset is None:
+                ro_offset = full_len - acq_len
+                tail_padding = 0
             else:
-                arr[arr_idx][expected_ro - actual_ro:] = rdata
-        else:
+                tail_padding = (full_len - acq_len) - ro_offset
+                if tail_padding < 0:
+                    raise ValueError("Readoug offset is too large")
+            if readout.eval_info_is_set('REFLECT'):
+                arr[arr_idx][tail_padding:-ro_offset] = rdata[::-1]
+            else:
+                arr[arr_idx][ro_offset:-tail_padding] = rdata
+        elif acq_len == full_len:
             if readout.eval_info_is_set('REFLECT'):
                 arr[arr_idx] = rdata[::-1]
             else:
                 arr[arr_idx] = rdata
+        else:
+            raise IndexError("Readout dim is too small for acquired data")
 
     def _fill_with_seek(self, spec, ro_map, arr):
         max_ro_per_mdh = np.cumsum(self._ro_per_mdh) - 1
         ro_indices = sorted(ro_map.keys())
         ro_buf = None
+        last_idx = None
         for ro_idx in ro_indices:
             if ro_buf is None or ro_idx > last_idx:
                 mdh_idx = np.searchsorted(max_ro_per_mdh, ro_idx)
@@ -916,11 +972,9 @@ class Meas(object):
                 else:
                     first_idx = max_ro_per_mdh[mdh_idx - 1] + 1
                 last_idx = max_ro_per_mdh[mdh_idx]
-                curr_idx = first_idx
             buf_idx = ro_idx - first_idx
             arr_idx = ro_map[ro_idx]
-            ro = ro_buf[buf_idx]
-            self._insert_ro(ro_buf[buf_idx], arr, arr_idx)
+            self._insert_ro(ro_buf[buf_idx], arr, arr_idx, spec.ro_offset)
 
     def _fill_seq(self, spec, ro_map, arr):
         ro_indices = deque(sorted(ro_map.keys()))
@@ -928,7 +982,7 @@ class Meas(object):
         for ro_idx, readout in enumerate(self.gen_readouts()):
             if ro_idx == curr_ro_idx:
                 arr_idx = ro_map[ro_idx]
-                self._insert_ro(readout, arr, arr_idx)
+                self._insert_ro(readout, arr, arr_idx, spec.ro_offset)
                 if len(ro_indices) == 0:
                     break
                 curr_ro_idx = ro_indices.popleft()
