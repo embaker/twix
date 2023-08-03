@@ -1047,23 +1047,16 @@ class MeasFile(object):
                 assert version == 2
             version = 2
             (n_meas,) = struct.unpack('<I', self._src_file.read(4))
-            for meas_idx in range(n_meas):
-                (meas_id,
-                 file_id,
-                 offset,
-                 length,
-                 patient,
-                 protocol) = struct.unpack('<2I2Q64s64s',
-                                           self._src_file.read(152))
-                patient = patient.rstrip(b'\0')
-                protocol = protocol.rstrip(b'\0')
+            meas_records = [struct.unpack('<2I2Q64s64s', self._src_file.read(152))
+                            for _ in range(n_meas)]
+            for meas_id, file_id, offset, length, patient, protocol in meas_records:
                 self._meas.append(Meas(self._src_file,
                                        offset,
                                        length,
                                        meas_id,
                                        file_id,
-                                       protocol,
-                                       patient,
+                                       protocol.rstrip(b'\0'),
+                                       patient.rstrip(b'\0'),
                                        version=version)
                                  )
 
